@@ -1,9 +1,9 @@
 CC=clang++
-CXX_FLAGS= -g -O3 -std=c++14
-CLANG_INCLUDE_CXXFLAGS_LINK = `llvm-config --cxxflags --ldflags --system-libs --libs core`
+CXX_FLAGS= -g -O3 -std=c++14 -w
+CLANG_INCLUDE_CXXFLAGS_LINK = `llvm-config --cxxflags --ldflags --system-libs --libs core native mcjit native`
 CLANG_INCLUDE_CXXFLAGS = `llvm-config --cxxflags`
 
-all: main.cpp lexer.o parser.o ast.o codegen.o test_parser.o 
+all: main.cpp lexer.o parser.o ast.o codegen.o optimizer.o test_parser.o jit.o
 	$(CC) $(CLANG_INCLUDE_CXXFLAGS_LINK) $(CXX_FLAGS) -o toy.out $^
 
 #Components compiler
@@ -19,6 +19,12 @@ ast.o: AST.cpp AST.h
 codegen.o: CodeGenerator.cpp CodeGenerator.h 
 	$(CC) -c -o $@ $< $(CLANG_INCLUDE_CXXFLAGS) $(CXX_FLAGS)
 
+optimizer.o: Optimizer.cpp Optimizer.h
+	$(CC) -c -o $@ $< $(CLANG_INCLUDE_CXXFLAGS) $(CXX_FLAGS)
+
+#jit compiler support
+jit.o: JIT.cpp JIT.h
+	$(CC) -c -o $@ $< $(CLANG_INCLUDE_CXXFLAGS) $(CXX_FLAGS)
 
 #Test compiler components
 test_parser.o: TestParser.cpp TestParser.h

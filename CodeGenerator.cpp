@@ -15,7 +15,6 @@
 
 #include "Parser.h"
 #include "AST.h"
-#include "llvm/IR/IRBuilder.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -26,13 +25,16 @@ using llvm::Function;
 using namespace parser;
 using namespace AST;
 
-static llvm::IRBuilder<> builder_ { llvm::getGlobalContext() };
-
 
 namespace code_generator {
       
    CodeGeneratorImpl::CodeGeneratorImpl() :
-   module_(std::make_unique<llvm::Module>("hack bitcode jit", llvm::getGlobalContext()))
+   //jit_(std::make_unique<jit::JIT>()),
+   //module_(jit_->getModulePtr()),
+   jit_(nullptr),
+   module_(std::make_unique<llvm::Module>("hack bitcode jit", llvm::getGlobalContext())),
+   builder_(llvm::getGlobalContext()),
+   optimizer_(std::make_unique<optimizer::Optimizer>(module_.get()))
    {}
    
    Value* CodeGeneratorImpl::errorV(const char* errorMsg)
@@ -115,6 +117,151 @@ namespace code_generator {
       return builder_.CreateCall(function, argsV, "calltmp");
    }
    
+   Value* CodeGeneratorImpl::codeGenIfExpr(const IfExprAST* ifExpr)
+   {
+      if(!ifExpr)
+         return nullptr;
+      
+      //resolve cond
+      auto CondV = ifExpr->getCondion()->codeGen();
+      if (!CondV)
+         return nullptr;
+      
+      // convert to bool comparing false to 0.0 (only doubles are supported)
+      CondV = builder_.CreateFCmpONE(CondV,
+                                     llvm::ConstantFP::get(llvm::getGlobalContext(),
+                                                           llvm::APFloat(0.0)), "ifcond");
+      
+      auto TheFunction = builder_.GetInsertBlock()->getParent();
+      
+      // Create blocks for the then and else cases.
+      auto ThenBB = llvm::BasicBlock::Create(llvm::getGlobalContext(), "then", TheFunction);
+      auto ElseBB = llvm::BasicBlock::Create(llvm::getGlobalContext(), "else");
+      auto MergeBB = llvm::BasicBlock::Create(llvm::getGlobalContext(), "ifcont");
+      builder_.CreateCondBr(CondV, ThenBB, ElseBB);
+      
+      // Emit then value.
+      builder_.SetInsertPoint(ThenBB);
+      
+      //resolve 'then' branch
+      auto ThenV = ifExpr->getThenBranch()->codeGen();
+      if (!ThenV)
+         return nullptr;
+      
+      builder_.CreateBr(MergeBB);
+      // Codegen of 'Then' can change the current block, update ThenBB for the PHI.
+      ThenBB = builder_.GetInsertBlock();
+      
+      // Emit else block.
+      TheFunction->getBasicBlockList().push_back(ElseBB);
+      builder_.SetInsertPoint(ElseBB);
+      
+      auto ElseV = ifExpr->getElseBranch()->codeGen();
+      if (!ElseV)
+         return nullptr;
+      
+      builder_.CreateBr(MergeBB);
+      // Codegen of 'Else' can change the current block, update ElseBB for the PHI.
+      ElseBB = builder_.GetInsertBlock();
+      
+      // Emit merge block.
+      TheFunction->getBasicBlockList().push_back(MergeBB);
+      builder_.SetInsertPoint(MergeBB);
+      
+      llvm::PHINode *PN = builder_.CreatePHI(llvm::Type::getDoubleTy(llvm::getGlobalContext()), 2, "iftmp");
+      PN->addIncoming(ThenV, ThenBB);
+      PN->addIncoming(ElseV, ElseBB);
+      return PN;
+      
+   }
+   
+   Value* CodeGeneratorImpl::codeGenForExpr(const ForExprAST* forExpr)
+   {
+      auto StartVal = forExpr->getStart()->codeGen();
+      if (!StartVal)
+         return nullptr;
+      
+      // Make the new basic block for the loop header, inserting after current
+      // block.
+      auto TheFunction = builder_.GetInsertBlock()->getParent();
+      auto PreheaderBB = builder_.GetInsertBlock();
+      auto LoopBB = llvm::BasicBlock::Create(llvm::getGlobalContext(), "loop", TheFunction);
+      
+      // Insert an explicit fall through from the current block to the LoopBB.
+      builder_.CreateBr(LoopBB);
+      
+      // Start insertion in LoopBB.
+      builder_.SetInsertPoint(LoopBB);
+      
+      // Start the PHI node with an entry for Start.
+      auto Variable = builder_.CreatePHI(llvm::Type::getDoubleTy(llvm::getGlobalContext()),
+                                            2, forExpr->getKey().c_str());
+      
+      Variable->addIncoming(StartVal, PreheaderBB);
+      
+      // Within the loop, the variable is defined equal to the PHI node.  If it
+      // shadows an existing variable, we have to restore it, so save it now.
+      const auto& varName = forExpr->getKey();
+      auto OldVal = namedValues_[varName];
+      namedValues_[varName] = Variable;
+      
+      // Emit the body of the loop.  This, like any other expr, can change the
+      // current BB.  Note that we ignore the value computed by the body, but don't
+      // allow an error.
+      if (!forExpr->getBody()->codeGen())
+         return nullptr;
+      
+      // Emit the step value.
+      const auto& Step = forExpr->getStep();
+      llvm::Value* StepVal = nullptr;
+      if (Step)
+      {
+         StepVal = Step->codeGen();
+         if (!StepVal)
+            return nullptr;
+      }
+      else
+      {
+         // If not specified, use 1.0.
+         StepVal = llvm::ConstantFP::get(llvm::getGlobalContext(), llvm::APFloat(1.0));
+      }
+      
+      auto NextVar = builder_.CreateFAdd(Variable, StepVal, "nextvar");
+      
+      // Compute the end condition.
+      auto EndCond = forExpr->getEnd()->codeGen();
+      if (!EndCond)
+         return nullptr;
+      
+      // Convert condition to a bool by comparing equal to 0.0.
+      EndCond = builder_.CreateFCmpONE(EndCond,
+                                       llvm::ConstantFP::get(llvm::getGlobalContext(),
+                                                             llvm::APFloat(0.0)), "loopcond");
+      
+      // Create the "after loop" block and insert it.
+      auto LoopEndBB = builder_.GetInsertBlock();
+      auto AfterBB = llvm::BasicBlock::Create(llvm::getGlobalContext(), "afterloop", TheFunction);
+      
+      // Insert the conditional branch into the end of LoopEndBB.
+      builder_.CreateCondBr(EndCond, LoopBB, AfterBB);
+      
+      // Any new code will be inserted in AfterBB.
+      builder_.SetInsertPoint(AfterBB);
+      
+      // Add a new entry to the PHI node for the backedge.
+      Variable->addIncoming(NextVar, LoopEndBB);
+      
+      // Restore the unshadowed variable.
+      if (OldVal)
+         namedValues_[varName] = OldVal;
+      else
+         namedValues_.erase(varName);
+      
+      // for expr always returns 0.0.
+      return llvm::Constant::getNullValue(llvm::Type::getDoubleTy(llvm::getGlobalContext()));
+   }
+
+
    Function* CodeGeneratorImpl::codeGenPrototypeExpr(const PrototypeAST* protoExpr)
    {
       auto argList = protoExpr->getArgumentList();
@@ -135,7 +282,6 @@ namespace code_generator {
       
       return f;
    }
-   
    
    Function* CodeGeneratorImpl::codeGenFunctionExpr(const FunctionAST* functExpr)
    {
@@ -163,6 +309,8 @@ namespace code_generator {
       {
          builder_.CreateRet(returnValue);
          llvm::verifyFunction(*f);
+         //eager optimization peephole 
+         optimizer_->runLocalFunctionOptimization(f);
          return f;
       }
       
@@ -170,5 +318,19 @@ namespace code_generator {
       f->eraseFromParent();
       return nullptr;
    }
+   
+
+   ///
+   /// Jit compilation test
+   ///
+//   void CodeGeneratorImpl::evalFunctionExpr(Function* function)
+//   {
+//      //since I am supporting only doubles I can have only doubles as params and void or double as return value
+//      //in this case I want to try a function double(*)()
+//      if(jit_)
+//         jit_->evalFunction(function);
+//      
+//   }
+
 
 }

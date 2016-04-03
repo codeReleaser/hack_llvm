@@ -25,15 +25,17 @@ namespace AST {
    ///
    /// @brief: base class to for all expression nodes
    ///
-   class ExprAST {
+   class ExprAST
+   {
+      
+   public:
+      explicit ExprAST();
+      virtual ~ExprAST() = default;
+      virtual llvm::Value* codeGen() const = 0;
       
    protected:
       using CodeGen = std::unique_ptr<code_generator::CodeGenerator>;
       static CodeGen codeGen_;
-   public:
-      ExprAST();
-      virtual ~ExprAST() = default;
-      virtual llvm::Value* codeGen() const = 0;
    };
    
    ///
@@ -41,12 +43,14 @@ namespace AST {
    ///
    class NumberExprAST : public ExprAST
    {
-   private:
-      double val_;
+      
    public:
-      NumberExprAST(double val);
+      explicit NumberExprAST(double val);
       double getVal() const;
       llvm::Value* codeGen() const override;
+      
+   private:
+      double val_;
    };
    
    ///
@@ -54,12 +58,14 @@ namespace AST {
    ///
    class VariableExprAST : public ExprAST
    {
-   private:
-      std::string name_;
+      
    public:
-      VariableExprAST(const std::string& name);
+      explicit VariableExprAST(const std::string& name);
       const std::string& getName() const;
       llvm::Value* codeGen() const override;
+      
+   private:
+      std::string name_;
    };
    
    ///
@@ -67,17 +73,18 @@ namespace AST {
    ///
    class BinaryExprAST : public ExprAST
    {
-   private:
       using operand_t = std::unique_ptr<ExprAST>;
       
-      unsigned char op_;
-      operand_t lhs_, rhs_;
    public:
-      BinaryExprAST(unsigned char op, operand_t lhs, operand_t rhs);
+      explicit BinaryExprAST(unsigned char op, operand_t lhs, operand_t rhs);
       unsigned char getOperation() const;
       const ExprAST* getLeftOperand() const;
       const ExprAST* getRightOperand() const;
       llvm::Value* codeGen() const override;
+      
+   private:
+      unsigned char op_;
+      operand_t lhs_, rhs_;
       
    };
    
@@ -86,17 +93,17 @@ namespace AST {
    ///
    class CallExprAST : public ExprAST
    {
-   private:
       using Args = std::vector<std::unique_ptr<ExprAST>>;
-      std::string callee_;
-      Args args_;
+     
    public:
-      CallExprAST(const std::string& callee, Args args);
-      
+      explicit CallExprAST(const std::string& callee, Args args);
       const Args& getArgumentList() const;
       const std::string getCallee() const;
       llvm::Value* codeGen() const override;
-
+      
+   private:
+      std::string callee_;
+      Args args_;
    };
    
    ///
@@ -104,16 +111,17 @@ namespace AST {
    ///
    class PrototypeAST : public ExprAST
    {
-   private:
       using Args = std::vector<std::string>;
-      std::string name_;
-      Args args_;
+      
    public:
-      PrototypeAST(const std::string& name, Args args);
+      explicit PrototypeAST(const std::string& name, Args args);
       const Args& getArgumentList() const;
       const std::string& getName() const;
       llvm::Function* codeGen() const;
 
+   private:
+      std::string name_;
+      Args args_;
    };
    
    ///
@@ -121,16 +129,67 @@ namespace AST {
    ///
    class FunctionAST : public ExprAST
    {
-   private:
       using prototype_t = std::unique_ptr<PrototypeAST>;
       using body_t = std::unique_ptr<ExprAST>;
-      prototype_t prototype_;
-      body_t body_;
+     
    public:
-      FunctionAST(prototype_t prototype, body_t body);
+      explicit FunctionAST(prototype_t prototype, body_t body);
       const prototype_t& getPrototype() const;
       const body_t& getBody() const;
       llvm::Function* codeGen() const;
+      //void eval(llvm::Function* f); //add jit compilation for functions
+      
+   private:
+      prototype_t prototype_;
+      body_t body_;
+   };
+   
+   ///
+   /// @brief: representation control block if/then/else
+   ///
+   class IfExprAST : public ExprAST
+   {
+      using condion_t = std::unique_ptr<ExprAST>;
+      using then_branch_t = std::unique_ptr<ExprAST>;
+      using else_branch_t = std::unique_ptr<ExprAST>;
+      
+   public:
+      explicit IfExprAST(condion_t c, then_branch_t t, else_branch_t e);
+      const condion_t& getCondion() const;
+      const then_branch_t& getThenBranch() const;
+      const else_branch_t& getElseBranch() const;
+      llvm::Value* codeGen() const;
+      
+   private:
+      std::unique_ptr<ExprAST> cond_, then_, else_;
+      
+   };
+   
+   ///
+   /// @brief: representation for loop
+   ///
+   class ForExprAST : public ExprAST
+   {
+      using expression_t = std::unique_ptr<ExprAST>;
+      
+   public:
+      explicit ForExprAST(std::string key,
+                          expression_t start,
+                          expression_t end,
+                          expression_t step,
+                          expression_t body);
+      
+      const std::string&  getKey() const;
+      const expression_t& getStart() const;
+      const expression_t& getEnd()   const;
+      const expression_t& getStep()  const;
+      const expression_t& getBody()  const;
+      
+      llvm::Value* codeGen() const;
+      
+   private:
+      std::string key_;
+      expression_t start_, end_, step_, body_;
    };
    
 }

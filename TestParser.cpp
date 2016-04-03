@@ -8,11 +8,12 @@
 
 #include "TestParser.h"
 #include "Parser.h"
+#include "Library.h" //fake lib for kaledoiscope
 #include <iostream>
 
 
 void TestParser::interativeTest()
-{
+{   
    parser_.setTokenPrecedence('<', 10);
    parser_.setTokenPrecedence('+', 20);
    parser_.setTokenPrecedence('-', 30);

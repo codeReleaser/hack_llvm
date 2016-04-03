@@ -11,10 +11,6 @@
 
 #include <string>
 
-namespace parser {
-   class Parser;
-}
-
 namespace lexer
 {
    
@@ -28,29 +24,41 @@ namespace lexer
       tok_eof = -1,
       
       // commands
-      tok_def = -2,
-      tok_extern = -3,
+      tok_def,
+      tok_extern,
       
       // primary
-      tok_identifier = -4,
-      tok_number = -5
+      tok_identifier,
+      tok_number,
+      
+      //control
+      tok_if,
+      tok_then,
+      tok_else,
+      
+      //for loop
+      tok_for,
+      tok_in
    };
    
    
    class Lexer {
       
-      friend class parser::Parser;
-      
-   private:
-      
-      std::string identifierStr_;
-      double numVal_;
-      
    public:
       
+      /**
+       * @brief: tokenize my input.
+       *         Reading from std::input a single char and recongnise the basic tokens of the language
+       */
       int gettok();
+      
       double getNum() const;
       std::string getId() const;
+      
+      
+   private:
+      std::string identifierStr_;
+      double numVal_;
       
    };
    

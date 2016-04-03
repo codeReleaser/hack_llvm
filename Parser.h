@@ -32,18 +32,12 @@ namespace parser {
    
    class Parser
    {
-      
-   private:
-      
-      int curToken_;
-      precedence_tree_t binaryOperationPrecedence_;
-      std::unique_ptr<lexer::Lexer> lexer_;
    public:
       
       ///
       /// default constructor
       ///
-      Parser();
+      explicit Parser();
       
       ///
       /// delete copy ctor and copy assignment
@@ -101,6 +95,11 @@ namespace parser {
       /// external ::= 'extern' prototype
       prototype_t parseExtern();
       
+      /// ifexpr ::= 'if' expression 'then' expression 'else' expression
+      expression_t parseIfExpr();
+      
+      /// forexpr ::= 'for' identifier '=' expr ',' expr (',' expr)? 'in' expression
+      expression_t parseForExpr();
       
       ///
       /// Top Level parsing
@@ -110,6 +109,12 @@ namespace parser {
       void handleTopLevelExpression();
       
       void mainLoop();
+      
+   private:
+      
+      int curToken_;
+      precedence_tree_t binaryOperationPrecedence_;
+      std::unique_ptr<lexer::Lexer> lexer_;
       
    };
    

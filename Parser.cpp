@@ -84,7 +84,7 @@ namespace parser
    
    expression_t Parser::parseNumberExpr()
    {
-      auto res = std::make_unique<AST::NumberExprAST>(lexer_->numVal_);
+      auto res = std::make_unique<AST::NumberExprAST>(lexer_->getNum());
       getNextToken();
       return std::move(res);
    }
@@ -108,7 +108,7 @@ namespace parser
    
    expression_t Parser::parseIdentifierExpr()
    {
-      auto idName = lexer_->identifierStr_;
+      auto idName = lexer_->getId();
       
       getNextToken();
       
@@ -161,6 +161,12 @@ namespace parser
             
          case '(':
             return parseParenExpr();
+         
+         case lexer::tok_if:
+            return parseIfExpr();
+            
+         case lexer::tok_for:
+            return parseForExpr();
       }
    }
    
@@ -198,7 +204,7 @@ namespace parser
          return errorP("expected function name in prototype");
       }
       
-      auto functionName = lexer_->identifierStr_;
+      auto functionName = lexer_->getId();
       
       getNextToken();
       
@@ -208,7 +214,7 @@ namespace parser
       ArgsStr_t args;
       while(getNextToken() == lexer::tok_identifier)
       {
-         args.push_back(lexer_->identifierStr_);
+         args.push_back(lexer_->getId());
       }
       
       if(curToken_!= ')')
@@ -251,6 +257,89 @@ namespace parser
       return parsePrototype();
    }
    
+   expression_t Parser::parseIfExpr()
+   {
+      getNextToken();
+      auto Cond = parseExpression();
+      
+      if(!Cond)
+         return nullptr;
+      
+      if (curToken_ != tok_then)
+         return errorP("expected then");
+      
+      getNextToken();
+      
+      auto Then = parseExpression();
+      if (!Then)
+         return nullptr;
+      
+      if (curToken_ != tok_else)
+         return errorP("expected else");
+      
+      getNextToken();
+      
+      auto Else = parseExpression();
+      if (!Else)
+         return nullptr;
+      
+      return std::make_unique<IfExprAST>(std::move(Cond), std::move(Then), std::move(Else));
+   }
+   
+   expression_t Parser::parseForExpr()
+   {
+      getNextToken();
+      
+      if (curToken_ != tok_identifier)
+         return errorP("expected identifier after for");
+      
+      std::string IdName = lexer_->getId();
+      
+      getNextToken();
+      
+      if (curToken_ != '=')
+         return errorP("expected '=' after for");
+      
+      getNextToken();
+      
+      auto Start = parseExpression();
+      if (!Start)
+         return nullptr;
+      
+      if (curToken_ != ',')
+         return errorP("expected ',' after for start value");
+      
+      getNextToken();
+      
+      auto End = parseExpression();
+      if (!End)
+         return nullptr;
+      
+      // The step value is optional.
+      expression_t Step;
+      if (curToken_ == ',')
+      {
+         getNextToken();
+         Step = parseExpression();
+         if (!Step)
+            return nullptr;
+      }
+      
+      if (curToken_ != tok_in)
+         return errorP("expected 'in' after for");
+      
+      getNextToken();
+      
+      auto Body = parseExpression();
+      if (!Body)
+         return nullptr;
+      
+      return llvm::make_unique<ForExprAST>(IdName, std::move(Start),
+                                           std::move(End), std::move(Step),
+                                           std::move(Body));
+      
+   }
+   
    ///
    /// Top-Level parsing
    ///
@@ -261,7 +350,6 @@ namespace parser
       {
          if( auto* defintionIR = parsedDefinition->codeGen())
          {
-            std::cerr << "Parsed a top level expr \n";
             defintionIR->dump();
          }
       }
@@ -277,7 +365,6 @@ namespace parser
       {
          if(auto* externIR = parsedExtern->codeGen())
          {
-            std::cerr << "Parsed an extern \n";
             externIR->dump();
          }
       }
@@ -293,8 +380,8 @@ namespace parser
       {
          if( auto* topLevelExprIR = parsedTopLevelExpr->codeGen())
          {
-            std::cerr << "Parsed a top level expr \n";
-            topLevelExprIR->dump();
+            //parsedTopLevelExpr->eval(topLevelExprIR); //evaluate using JIT
+            topLevelExprIR->dump();   //dump IR for the function
          }
       }
       else

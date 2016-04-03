@@ -14,10 +14,7 @@
 
 namespace lexer
 {
-   /**
-    * @brief: tokenize my input.
-    *         Reading from std::input a single char and recongnise the basic tokens of the language
-    */
+   
    int Lexer::gettok() {
       
       static int LastChar = ' ';
@@ -36,13 +33,19 @@ namespace lexer
          }
          
          if (identifierStr_ == "def")
-         {
             return tok_def;
-         }
-         else if (identifierStr_ == "extern")
-         {
+         if (identifierStr_ == "extern")
             return tok_extern;
-         }
+         if (identifierStr_ == "if")
+            return tok_if;
+         if (identifierStr_ == "then")
+            return tok_then;
+         if (identifierStr_ == "else")
+            return tok_else;
+         if(identifierStr_ == "for")
+            return tok_for;
+         if(identifierStr_ == "in")
+            return tok_in;
          
          return tok_identifier;
       }
@@ -82,6 +85,16 @@ namespace lexer
       LastChar = getchar();
       return ThisChar;
      
+   }
+   
+   double Lexer::getNum() const
+   {
+      return numVal_;
+   }
+   
+   std::string Lexer::getId() const
+   {
+      return identifierStr_;
    }
    
 }
