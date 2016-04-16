@@ -46,6 +46,12 @@ namespace lexer
             return tok_for;
          if(identifierStr_ == "in")
             return tok_in;
+         if(identifierStr_ == "unary")
+            return tok_unary;
+         if(identifierStr_ == "binary")
+            return tok_binary;
+         if (identifierStr_ == "var")
+            return tok_var;
          
          return tok_identifier;
       }

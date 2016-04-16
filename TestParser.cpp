@@ -13,7 +13,8 @@
 
 
 void TestParser::interativeTest()
-{   
+{
+   parser_.setTokenPrecedence('=', 2);
    parser_.setTokenPrecedence('<', 10);
    parser_.setTokenPrecedence('+', 20);
    parser_.setTokenPrecedence('-', 30);

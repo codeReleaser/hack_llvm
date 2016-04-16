@@ -43,7 +43,8 @@ namespace AST {
    /// Variable expression
    ///
    
-   VariableExprAST::VariableExprAST(const std::string& name) : name_(name)
+   VariableExprAST::VariableExprAST(const std::string& name) :
+   name_(name)
    {}
    
    const std::string& VariableExprAST::getName() const
@@ -51,34 +52,59 @@ namespace AST {
       return name_;
    }
    
+
    Value* VariableExprAST::codeGen() const
    {
       return codeGen_->codeGenVariableExpr(this);
    }
    
    ///
+   /// Unary expression
+   ///
+   
+   UnaryExprAST::UnaryExprAST(opcode_t opcode, operand_t operand) :
+   opcode_(opcode),
+   operand_(std::move(operand))
+   {}
+   
+   UnaryExprAST::opcode_t UnaryExprAST::getOpcode() const
+   {
+      return opcode_;
+   }
+   const UnaryExprAST::operand_t& UnaryExprAST::getOperand() const
+   {
+      return operand_;
+   }
+   
+   llvm::Value *UnaryExprAST::codeGen() const
+   {
+      return codeGen_->codeGenUnaryExpr(this);
+   }
+   
+   
+   ///
    /// Binary expression
    ///
    
-   BinaryExprAST::BinaryExprAST(unsigned char op, operand_t lhs, operand_t rhs) :
-   op_(op),
+   BinaryExprAST::BinaryExprAST(opcode_t opcode, operand_t lhs, operand_t rhs) :
+   opcode_(opcode),
    lhs_(std::move(lhs)),
    rhs_(std::move(rhs))
    {}
       
-   unsigned char BinaryExprAST::getOperation() const
+   BinaryExprAST::opcode_t BinaryExprAST::getOpcode() const
    {
-      return op_;
+      return opcode_;
    }
    
-   const ExprAST* BinaryExprAST::getLeftOperand() const
+   const BinaryExprAST::operand_t& BinaryExprAST::getLeftOperand() const
    {
-      return lhs_.get();
+      return lhs_;
    }
    
-   const ExprAST* BinaryExprAST::getRightOperand() const
+   const BinaryExprAST::operand_t& BinaryExprAST::getRightOperand() const
    {
-      return rhs_.get();
+      return rhs_;
    }
    
    llvm::Value* BinaryExprAST::codeGen() const
@@ -114,9 +140,14 @@ namespace AST {
    /// Prototype AST
    ///
 
-   PrototypeAST::PrototypeAST(const std::string& name, PrototypeAST::Args args) :
+   PrototypeAST::PrototypeAST( std::string name,
+                               PrototypeAST::Args args,
+                               bool is_operator,
+                               unsigned precedence) :
       name_(std::move(name)),
-      args_(std::move(args))
+      args_(std::move(args)),
+      is_operator_(is_operator),
+      precedence_(precedence)
    {}
       
    const PrototypeAST::Args& PrototypeAST::getArgumentList() const
@@ -128,6 +159,28 @@ namespace AST {
    {
       return name_;
    }
+   
+   bool PrototypeAST::isUnary() const
+   {
+      return is_operator_ && args_.size() == 1;
+   }
+   
+   bool PrototypeAST::isBinary() const
+   {
+      return is_operator_ && args_.size() == 2;
+   }
+   
+   unsigned PrototypeAST::getBinaryPrecedence() const
+   {
+      return precedence_;
+   }
+   
+   char PrototypeAST::getOperatorName() const
+   {
+      assert(isUnary() || isBinary());
+      return name_[name_.size()-1];
+   }
+   
    
    llvm::Function* PrototypeAST::codeGen() const
    {
@@ -142,10 +195,10 @@ namespace AST {
       prototype_(std::move(prototype)),
       body_(std::move(body))
    {}
-      
+   
    const FunctionAST::prototype_t& FunctionAST::getPrototype() const
    {
-      return prototype_;
+      return std::move(prototype_);
    } 
    
    const FunctionAST::body_t& FunctionAST::getBody() const
@@ -236,5 +289,30 @@ namespace AST {
    {
       return codeGen_->codeGenForExpr(this);
    }
+   
+   ///
+   /// VarExprAST
+   ///
+   
+   VarExprAST::VarExprAST(variable_names_t varNames, expression_t body) :
+   varNames_(std::move(varNames)),
+   body_(std::move(body))
+   {}
+   
+   const VarExprAST::variable_names_t& VarExprAST::getVarNames() const
+   {
+      return varNames_;
+   }
+   
+   const VarExprAST::expression_t& VarExprAST::getBody() const
+   {
+      return body_;
+   }
+   
+   llvm::Value* VarExprAST::codeGen() const
+   {
+      return codeGen_->codeGeneVarExpr(this);
+   }
+
 
 }

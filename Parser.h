@@ -25,7 +25,6 @@ using namespace AST;
 
 namespace parser {
    
-   using precedence_tree_t = std::map<unsigned char, int>;
    using expression_t = std::unique_ptr<ExprAST>;
    using prototype_t = std::unique_ptr<PrototypeAST>;
    using function_t = std::unique_ptr<FunctionAST>;
@@ -60,7 +59,7 @@ namespace parser {
       expression_t parseNumberExpr();
       
       ///parenexpr := '(' expression ')'
-      expression_t parseParenExpr();
+      expression_t parseParentExpr();
       
       ///identifierexpr
       ///   := identifier
@@ -73,7 +72,12 @@ namespace parser {
       ///   ::= parenexpr
       expression_t parsePrimaryExpression();
       
-      /// binoprhs
+      /// unary operation
+      ///  ::= primary
+      ///  ::= '!' unary
+      expression_t parseUnary();
+      
+      /// binary operation
       ///   ::= ('+' primary)*
       expression_t parseBinOpRHS(int exprPrec, expression_t lhs);
       
@@ -84,6 +88,8 @@ namespace parser {
       
       /// prototype
       ///   ::= id '(' id* ')'
+      ///   ::= unary  LETTER number? (id)
+      ///   ::= binary LETTER number? (id, id)
       prototype_t parsePrototype();
       
       /// definition ::= 'def' prototype expression
@@ -101,6 +107,10 @@ namespace parser {
       /// forexpr ::= 'for' identifier '=' expr ',' expr (',' expr)? 'in' expression
       expression_t parseForExpr();
       
+      /// varexpr ::= 'var' identifier ('=' expression)?
+      //  (',' identifier ('=' expression)?)* 'in' expression
+      expression_t parseVarExpr();
+      
       ///
       /// Top Level parsing
       ///
@@ -113,7 +123,6 @@ namespace parser {
    private:
       
       int curToken_;
-      precedence_tree_t binaryOperationPrecedence_;
       std::unique_ptr<lexer::Lexer> lexer_;
       
    };

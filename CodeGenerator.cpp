@@ -19,25 +19,55 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/IR/Instructions.h"
 
 using llvm::Value;
 using llvm::Function;
 using namespace parser;
 using namespace AST;
 
+namespace code_generator
+{
+   
+   ///
+   /// initialize the binary operation precedence map
+   ///
+   CodeGeneratorImpl::precedence_tree_t CodeGeneratorImpl::binaryOperationPrecedence_;
+   
+   ///
+   /// initialize cache
+   ///
+   CodeGeneratorImpl::prototype_cache_t CodeGeneratorImpl::prototypeCache_;
+   
+   ///
+   /// return a reference to the internal map that holds all the operators
+   ///
 
-namespace code_generator {
-      
+   CodeGeneratorImpl::precedence_tree_t& CodeGeneratorImpl::getOperatorPrecedence()
+   {
+      return binaryOperationPrecedence_;
+   }
+   
+   CodeGeneratorImpl::prototype_cache_t& CodeGeneratorImpl::getProtypeCache()
+   {
+      return prototypeCache_;
+   }
+
+   
+   ///
+   /// ctor of the code generator
+   ///
+   
    CodeGeneratorImpl::CodeGeneratorImpl() :
    //jit_(std::make_unique<jit::JIT>()),
    //module_(jit_->getModulePtr()),
-   jit_(nullptr),
+   //jit_(nullptr),
    module_(std::make_unique<llvm::Module>("hack bitcode jit", llvm::getGlobalContext())),
    builder_(llvm::getGlobalContext()),
    optimizer_(std::make_unique<optimizer::Optimizer>(module_.get()))
    {}
    
-   Value* CodeGeneratorImpl::errorV(const char* errorMsg)
+   Value* CodeGeneratorImpl::errorV(const std::string& errorMsg)
    {
       std::cerr << errorMsg << std::endl;
       return nullptr;
@@ -53,53 +83,80 @@ namespace code_generator {
       auto v = namedValues_.find(variableExpr->getName());
       if( v == namedValues_.end() )
       {
-         std::string err = "Unknown variable name : ";
-         err +=  variableExpr->getName();
-         return errorV( err.c_str() );
+         return errorV( std::string("Unknown variable name : ") + variableExpr->getName());
       }
       
+      return builder_.CreateLoad(v->second, variableExpr->getName());
       return v->second;
    }
    
-   Value* CodeGeneratorImpl::codeGenBinaryExpr(const BinaryExprAST* binaryExpr)
+   Value* CodeGeneratorImpl::codeGenUnaryExpr(const UnaryExprAST* unaryExpr)
    {
-      auto lhs = binaryExpr->getLeftOperand();
-      auto rhs = binaryExpr->getRightOperand();
-      auto op = binaryExpr->getOperation();
-      
-      if( lhs == nullptr || rhs == nullptr )
+      auto operandValue = unaryExpr->getOperand()->codeGen();
+      if (!operandValue)
          return nullptr;
       
-      //evaluete operands
-      auto leftValue  = lhs->codeGen();
-      auto rightValue = rhs->codeGen();
+      auto functionValue = getFunction(std::string("unary") +  unaryExpr->getOpcode());
+      if (!functionValue)
+         return errorV("Unknown unary operator");
       
-      if(leftValue == nullptr || rightValue == nullptr)
-         return nullptr;
-      
-      switch (op)
+      return builder_.CreateCall(functionValue, operandValue, "unop");
+   }
+
+   Value* CodeGeneratorImpl::codeGenBinaryExpr(const BinaryExprAST* binaryExpr)
+   { auto op = binaryExpr->getOpcode();
+
+      if( op == '=')
       {
-         case '+':
-            return builder_.CreateFAdd(leftValue, rightValue, "addtmp");
-         case '-':
-            return builder_.CreateFSub(leftValue, rightValue, "subtmp");
-         case '*':
-            return builder_.CreateFMul(leftValue, rightValue, "multmp");
-         case '<':
-            leftValue = builder_.CreateFCmpULT(leftValue, rightValue, "cmptmp");
-            // Convert bool to double
-            return builder_.CreateUIToFP(leftValue,
-                                        llvm::Type::getDoubleTy(llvm::getGlobalContext()),
-                                        "booltmp");
-         default:
-            return errorV("invalid binary operator");
+         return manageAssignment(binaryExpr);
       }
-      return nullptr;
+      else
+      {
+         const auto& lhs = binaryExpr->getLeftOperand();
+         const auto& rhs = binaryExpr->getRightOperand();
+         
+         if( lhs == nullptr || rhs == nullptr )
+            return nullptr;
+
+         
+         //evaluete operands
+         auto leftValue  = lhs->codeGen();
+         auto rightValue = rhs->codeGen();
+         
+         if(leftValue == nullptr || rightValue == nullptr)
+            return nullptr;
+         
+         switch (op)
+         {
+            case '+':
+               return builder_.CreateFAdd(leftValue, rightValue, "addtmp");
+            case '-':
+               return builder_.CreateFSub(leftValue, rightValue, "subtmp");
+            case '*':
+               return builder_.CreateFMul(leftValue, rightValue, "multmp");
+            case '<':
+               leftValue = builder_.CreateFCmpULT(leftValue, rightValue, "cmptmp");
+               // Convert bool to double
+               return builder_.CreateUIToFP(leftValue,
+                                            llvm::Type::getDoubleTy(llvm::getGlobalContext()),
+                                            "booltmp");
+            default:
+               break;
+         }
+         
+         auto function = getFunction(std::string("binary") + (char)op);
+         assert(function != nullptr && "binary function not found");
+         
+         Value* ops[] = {leftValue, rightValue};
+         return builder_.CreateCall(function, ops, "binop");
+      }
+      
+     
    }
    
    Value* CodeGeneratorImpl::codeGenCallExpr(const CallExprAST* callExpr)
    {
-      Function* function = module_->getFunction(callExpr->getCallee());
+      Function* function = getFunction(callExpr->getCallee());
       if( function == nullptr )
          errorV("Unknown function referenced");
       
@@ -203,7 +260,7 @@ namespace code_generator {
       // shadows an existing variable, we have to restore it, so save it now.
       const auto& varName = forExpr->getKey();
       auto OldVal = namedValues_[varName];
-      namedValues_[varName] = Variable;
+      namedValues_[varName] = CreateEntryBlockAlloca(TheFunction, varName);
       
       // Emit the body of the loop.  This, like any other expr, can change the
       // current BB.  Note that we ignore the value computed by the body, but don't
@@ -285,25 +342,38 @@ namespace code_generator {
    
    Function* CodeGeneratorImpl::codeGenFunctionExpr(const FunctionAST* functExpr)
    {
+      //hack!!!
+      //const_cast<std::unique_ptr<PrototypeAST>&>(functExpr->getPrototype());
       const auto& prototype = functExpr->getPrototype();
       const auto& body = functExpr->getBody();
       
       //search for function declared by previous 'extern'
-      llvm::Function* f = module_->getFunction(prototype->getName());
+      auto name = prototype->getName();
+      llvm::Function* f = getFunction(prototype->getName());
       
       if( f == nullptr )
          f = prototype->codeGen();
       
-      if( f == nullptr )
-         return nullptr;
+      if(prototype->isBinary())
+         binaryOperationPrecedence_[prototype->getOperatorName()] = prototype->getBinaryPrecedence();
       
       llvm::BasicBlock* bb = llvm::BasicBlock::Create(llvm::getGlobalContext(), "entry", f);
       builder_.SetInsertPoint(bb);
       namedValues_.clear();
       for( auto& arg : f->args())
-         namedValues_[arg.getName()] = &arg;
-      
+      {
+         AllocaInst *alloca = CreateEntryBlockAlloca(f, arg.getName());
+         builder_.CreateStore(&arg, alloca);
+         namedValues_[arg.getName()] = alloca;
+      }
+
       auto returnValue = body->codeGen();
+      
+      //incredible hack to move in the ptr!!! work this out in some way that's better
+      auto& p = const_cast<std::unique_ptr<PrototypeAST>&>(prototype);
+      std::unique_ptr<PrototypeAST> ptr;
+      ptr.reset(p.release());
+      prototypeCache_[ptr->getName()] = std::move(ptr);
       
       if(returnValue != nullptr)
       {
@@ -319,6 +389,56 @@ namespace code_generator {
       return nullptr;
    }
    
+   Value* CodeGeneratorImpl::codeGeneVarExpr(const VarExprAST* variableExpr)
+   {
+      std::vector<AllocaInst *> oldBindings;
+      Function *function = builder_.GetInsertBlock()->getParent();
+      
+      const auto& variableNames = variableExpr->getVarNames();
+      
+      for (unsigned i = 0, e = variableNames.size(); i != e; ++i)
+      {
+         const auto& varName = variableNames[i].first;
+         const auto& init = variableNames[i].second;
+         
+         //emit init
+         Value *initVal;
+         if (init)
+         {
+            initVal = init->codeGen();
+            if (!initVal)
+               return nullptr;
+         }
+         else
+         {
+            initVal = llvm::ConstantFP::get(llvm::getGlobalContext(), llvm::APFloat(0.0));
+         }
+         
+         auto alloca = CreateEntryBlockAlloca(function, varName);
+         builder_.CreateStore(initVal, alloca);
+         
+         //memorize bind
+         oldBindings.push_back(namedValues_[varName]);
+         
+         // Remember this binding.
+         namedValues_[varName] = alloca;
+      }
+      
+      // Codegen the body, now that all vars are in scope.
+      auto bodyVal = variableExpr->getBody()->codeGen();
+      if (!bodyVal)
+         return nullptr;
+      
+      // Pop all our variables from scope.
+      for (unsigned i = 0, e = variableNames.size(); i != e; ++i)
+         namedValues_[variableNames[i].first] = oldBindings[i];
+      
+      // Return the body computation.
+      return bodyVal;
+
+   }
+
+   
 
    ///
    /// Jit compilation test
@@ -331,6 +451,61 @@ namespace code_generator {
 //         jit_->evalFunction(function);
 //      
 //   }
+   
+   ///
+   /// private interface
+   ///
+   
+   AllocaInst* CodeGeneratorImpl::CreateEntryBlockAlloca(Function *function, const std::string &variableName)
+   {
+      llvm::IRBuilder<> TmpB(&function->getEntryBlock(), function->getEntryBlock().begin());
+      return TmpB.CreateAlloca(llvm::Type::getDoubleTy(llvm::getGlobalContext()), 0, variableName.c_str());
+   }
+   
+   ///
+   ///
+   ///
+   Function* CodeGeneratorImpl::getFunction(const std::string& name) const
+   {
+      if( auto f = module_->getFunction(name) )
+         return f;
+      
+      auto fi = prototypeCache_.find(name);
+      if ( fi != prototypeCache_.end())
+         return fi->second->codeGen();
+      
+      return nullptr;
+   }
+
+   
+   ///
+   /// @brief: manage assigment
+   ///
+   llvm::Value* CodeGeneratorImpl::manageAssignment(const BinaryExprAST* binaryExpression)
+   {
+      using variable_expression_t = const std::unique_ptr<VariableExprAST>&;
+      //bit hacky here...
+      const auto& lhs = reinterpret_cast<variable_expression_t>(binaryExpression->getLeftOperand());
+      const auto& rhs = binaryExpression->getRightOperand();
+      
+      if (!lhs)
+         return errorV("destination of '=' must be a variable");
+      
+      if(!rhs)
+         return errorV("expression to evaluate to the right of '=' must be valid");
+      
+      auto value = rhs->codeGen();
+      if (!value)
+         return nullptr;
+      
+      // Look-up the name.
+      auto variable = namedValues_[lhs->getName()];
+      if (!variable)
+         return errorV("Unknown variable name");
+      
+      builder_.CreateStore(value, variable);
+      return value;
+   }
 
 
 }

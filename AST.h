@@ -60,32 +60,12 @@ namespace AST {
    {
       
    public:
-      explicit VariableExprAST(const std::string& name);
+      explicit VariableExprAST(const std::string& name );
       const std::string& getName() const;
       llvm::Value* codeGen() const override;
       
    private:
       std::string name_;
-   };
-   
-   ///
-   /// @brief: class to represent a binary operation (e.g 1.0+2.0)
-   ///
-   class BinaryExprAST : public ExprAST
-   {
-      using operand_t = std::unique_ptr<ExprAST>;
-      
-   public:
-      explicit BinaryExprAST(unsigned char op, operand_t lhs, operand_t rhs);
-      unsigned char getOperation() const;
-      const ExprAST* getLeftOperand() const;
-      const ExprAST* getRightOperand() const;
-      llvm::Value* codeGen() const override;
-      
-   private:
-      unsigned char op_;
-      operand_t lhs_, rhs_;
-      
    };
    
    ///
@@ -114,14 +94,25 @@ namespace AST {
       using Args = std::vector<std::string>;
       
    public:
-      explicit PrototypeAST(const std::string& name, Args args);
+      explicit PrototypeAST(std::string name,
+                            Args args,
+                            bool is_operator = false,
+                            unsigned precedence = 0);
+      
       const Args& getArgumentList() const;
       const std::string& getName() const;
-      llvm::Function* codeGen() const;
+      bool isUnary() const;
+      bool isBinary() const;
+      unsigned getBinaryPrecedence() const;
+      char getOperatorName() const;
+      
+      llvm::Function* codeGen() const override;
 
    private:
       std::string name_;
       Args args_;
+      bool is_operator_;
+      unsigned precedence_;
    };
    
    ///
@@ -136,7 +127,7 @@ namespace AST {
       explicit FunctionAST(prototype_t prototype, body_t body);
       const prototype_t& getPrototype() const;
       const body_t& getBody() const;
-      llvm::Function* codeGen() const;
+      llvm::Function* codeGen() const override;
       //void eval(llvm::Function* f); //add jit compilation for functions
       
    private:
@@ -158,7 +149,7 @@ namespace AST {
       const condion_t& getCondion() const;
       const then_branch_t& getThenBranch() const;
       const else_branch_t& getElseBranch() const;
-      llvm::Value* codeGen() const;
+      llvm::Value* codeGen() const override;
       
    private:
       std::unique_ptr<ExprAST> cond_, then_, else_;
@@ -185,12 +176,73 @@ namespace AST {
       const expression_t& getStep()  const;
       const expression_t& getBody()  const;
       
-      llvm::Value* codeGen() const;
+      llvm::Value* codeGen() const override;
       
    private:
       std::string key_;
       expression_t start_, end_, step_, body_;
    };
+   
+   ///
+   /// @brief: unary operator
+   ///
+   class UnaryExprAST : public ExprAST
+   {
+      using opcode_t = char;
+      using operand_t = std::unique_ptr<ExprAST>;
+      
+   public:
+      
+      explicit UnaryExprAST(opcode_t opcode, operand_t operand);
+      opcode_t getOpcode() const;
+      const operand_t& getOperand() const;
+      llvm::Value *codeGen() const override;
+      
+   private:
+      opcode_t opcode_;
+      operand_t operand_;
+   };
+   
+   ///
+   /// @brief: binary expression represention
+   ///
+   class BinaryExprAST : public ExprAST
+   {
+      using opcode_t = unsigned char;
+      using operand_t = std::unique_ptr<ExprAST>;
+      
+   public:
+      explicit BinaryExprAST(opcode_t opcode, operand_t lhs, operand_t rhs);
+      opcode_t getOpcode() const;
+      const operand_t& getLeftOperand() const;
+      const operand_t& getRightOperand() const;
+      llvm::Value* codeGen() const override;
+      
+   private:
+      opcode_t opcode_;
+      operand_t lhs_, rhs_;
+      
+   };
+   
+   ///
+   /// @brief: var/in representation
+   ///
+   class VarExprAST : public ExprAST
+   {
+      using variable_names_t = std::vector<std::pair<std::string, std::unique_ptr<ExprAST>>>;
+      using expression_t = std::unique_ptr<ExprAST>;
+      
+   public:
+      VarExprAST(variable_names_t varNames, expression_t body);
+      const variable_names_t& getVarNames() const;
+      const expression_t& getBody() const;
+      llvm::Value *codeGen() const override;
+      
+   private:
+      variable_names_t varNames_;
+      expression_t body_;
+   };
+
    
 }
 
