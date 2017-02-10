@@ -22,10 +22,6 @@ codegen.o: CodeGenerator.cpp CodeGenerator.h
 optimizer.o: Optimizer.cpp Optimizer.h
 	$(CC) -c -o $@ $< $(CLANG_INCLUDE_CXXFLAGS) $(CXX_FLAGS)
 
-#jit compiler support
-jit.o: JIT.cpp JIT.h
-	$(CC) -c -o $@ $< $(CLANG_INCLUDE_CXXFLAGS) $(CXX_FLAGS)
-
 #Test compiler components
 test_parser.o: TestParser.cpp TestParser.h
 	$(CC) -c -o $@ $< $(CLANG_INCLUDE_CXXFLAGS) $(CXX_FLAGS)
