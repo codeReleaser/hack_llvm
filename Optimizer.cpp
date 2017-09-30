@@ -18,11 +18,8 @@ namespace optimizer
    ///
    /// @brief: construct optimizer and init the function passage manager
    ///
-   Optimizer::Optimizer(llvm::Module* module) :
-      funcPassManager_(nullptr)
-   {
-      prematureOptimization(module);
-   }
+   Optimizer::Optimizer() : funcPassManager_(nullptr)
+   {}
    
    ///
    /// @brief: run FunctionPassManager optimizer for the function passed
@@ -37,7 +34,7 @@ namespace optimizer
    /// @brief: premature optimization for function generated (mainly peephole opt)
    ///
    
-   void Optimizer::prematureOptimization(llvm::Module* module)
+   void Optimizer::enablePrematureOptimization(llvm::Module* module)
    {
       //initializa the function passage manager
       funcPassManager_ = std::make_unique<llvm::legacy::FunctionPassManager>(module);
@@ -47,7 +44,7 @@ namespace optimizer
       // Reassociate expressions.
       funcPassManager_->add(llvm::createReassociatePass());
       // Eliminate Common SubExpressions.
-      funcPassManager_->add(llvm::createGVNPass());
+      funcPassManager_->add(llvm::createNewGVNPass());
       // Simplify the control flow graph (deleting unreachable blocks, etc).
       funcPassManager_->add(llvm::createCFGSimplificationPass());
       //do init

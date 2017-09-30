@@ -15,59 +15,80 @@
 
 #include "Parser.h"
 #include "AST.h"
+#include "JIT.h"
+
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/IR/Instructions.h"
 
+
 using llvm::Value;
 using llvm::Function;
 using namespace parser;
 using namespace AST;
 
+//llvm::LLVMContext;
+
 namespace code_generator
 {
    
    ///
-   /// initialize the binary operation precedence map
-   ///
-   CodeGeneratorImpl::precedence_tree_t CodeGeneratorImpl::binaryOperationPrecedence_;
-   
-   ///
-   /// initialize cache
-   ///
-   CodeGeneratorImpl::prototype_cache_t CodeGeneratorImpl::prototypeCache_;
-   
-   ///
    /// return a reference to the internal map that holds all the operators
    ///
-
-   CodeGeneratorImpl::precedence_tree_t& CodeGeneratorImpl::getOperatorPrecedence()
+   int CodeGeneratorImpl::getOperatorPrecedence(unsigned char token) const
    {
-      return binaryOperationPrecedence_;
+      auto it = binaryOperationPrecedence_.find(token);
+      return it != binaryOperationPrecedence_.end() ? it->second : -1;
    }
    
-   CodeGeneratorImpl::prototype_cache_t& CodeGeneratorImpl::getProtypeCache()
+   ///
+   /// @brief: return reference to cache of all prototype functions parsed
+   ///
+   const prototype_cache_t& CodeGeneratorImpl::getProtypeCache() const
    {
       return prototypeCache_;
    }
-
    
+   ///
+   /// @brief: set operator precendece
+   ///
+   void CodeGeneratorImpl::setOperatorPrecedence(unsigned char token, int value)
+   {
+      binaryOperationPrecedence_.insert(std::make_pair(token, value));
+   }
+   
+   
+   void CodeGeneratorImpl::addProtypeCache(const std::string& key, std::unique_ptr<PrototypeAST>& prototype)
+   {
+      //mmm... hugly
+      prototypeCache_[key] = std::move(prototype);
+   }
+   
+   void CodeGeneratorImpl::InitializeModuleAndPassManager()
+   {
+      module_ = std::make_unique<llvm::Module>("hacking", context_);
+      optimizer_->enablePrematureOptimization(module_.get());
+
+      module_->setDataLayout(jitCompiler_.getTargetMachine().createDataLayout());
+   }
+
    ///
    /// ctor of the code generator
    ///
    
-   CodeGeneratorImpl::CodeGeneratorImpl() :
-   //jit_(std::make_unique<jit::JIT>()),
-   //module_(jit_->getModulePtr()),
-   //jit_(nullptr),
-   module_(std::make_unique<llvm::Module>("hack bitcode jit", llvm::getGlobalContext())),
-   builder_(llvm::getGlobalContext()),
-   optimizer_(std::make_unique<optimizer::Optimizer>(module_.get()))
-   {}
+   //tmp hack to pass the jit compiler into the code generator2
+   CodeGeneratorImpl::CodeGeneratorImpl(jit::JIT& jitCompiler) : CodeGenerator(),
+      jitCompiler_(jitCompiler),
+      module_(nullptr),
+      builder_(context_),
+      optimizer_(std::make_unique<optimizer::Optimizer>())
+   {
+      //InitializeModuleAndPassManager();
+   }
    
-   Value* CodeGeneratorImpl::errorV(const std::string& errorMsg)
+   Value* CodeGeneratorImpl::errorV(const std::string& errorMsg) const
    {
       std::cerr << errorMsg << std::endl;
       return nullptr;
@@ -75,7 +96,7 @@ namespace code_generator
    
    Value* CodeGeneratorImpl::codeGenNumberExpr(const NumberExprAST* numExpr)
    {
-      return llvm::ConstantFP::get(llvm::getGlobalContext(), llvm::APFloat(numExpr->getVal()));
+      return llvm::ConstantFP::get(context_, llvm::APFloat(numExpr->getVal()));
    }
    
    Value* CodeGeneratorImpl::codeGenVariableExpr(const VariableExprAST* variableExpr)
@@ -138,7 +159,7 @@ namespace code_generator
                leftValue = builder_.CreateFCmpULT(leftValue, rightValue, "cmptmp");
                // Convert bool to double
                return builder_.CreateUIToFP(leftValue,
-                                            llvm::Type::getDoubleTy(llvm::getGlobalContext()),
+                                            llvm::Type::getDoubleTy(context_),
                                             "booltmp");
             default:
                break;
@@ -157,8 +178,10 @@ namespace code_generator
    Value* CodeGeneratorImpl::codeGenCallExpr(const CallExprAST* callExpr)
    {
       Function* function = getFunction(callExpr->getCallee());
-      if( function == nullptr )
+      if( function == nullptr ) {
          errorV("Unknown function referenced");
+         return nullptr;
+      }
       
       const auto& args = callExpr->getArgumentList();
       if( function->arg_size() != args.size())
@@ -186,15 +209,15 @@ namespace code_generator
       
       // convert to bool comparing false to 0.0 (only doubles are supported)
       CondV = builder_.CreateFCmpONE(CondV,
-                                     llvm::ConstantFP::get(llvm::getGlobalContext(),
+                                     llvm::ConstantFP::get(context_,
                                                            llvm::APFloat(0.0)), "ifcond");
       
       auto TheFunction = builder_.GetInsertBlock()->getParent();
       
       // Create blocks for the then and else cases.
-      auto ThenBB = llvm::BasicBlock::Create(llvm::getGlobalContext(), "then", TheFunction);
-      auto ElseBB = llvm::BasicBlock::Create(llvm::getGlobalContext(), "else");
-      auto MergeBB = llvm::BasicBlock::Create(llvm::getGlobalContext(), "ifcont");
+      auto ThenBB = llvm::BasicBlock::Create(context_, "then", TheFunction);
+      auto ElseBB = llvm::BasicBlock::Create(context_, "else");
+      auto MergeBB = llvm::BasicBlock::Create(context_, "ifcont");
       builder_.CreateCondBr(CondV, ThenBB, ElseBB);
       
       // Emit then value.
@@ -225,7 +248,7 @@ namespace code_generator
       TheFunction->getBasicBlockList().push_back(MergeBB);
       builder_.SetInsertPoint(MergeBB);
       
-      llvm::PHINode *PN = builder_.CreatePHI(llvm::Type::getDoubleTy(llvm::getGlobalContext()), 2, "iftmp");
+      llvm::PHINode *PN = builder_.CreatePHI(llvm::Type::getDoubleTy(context_), 2, "iftmp");
       PN->addIncoming(ThenV, ThenBB);
       PN->addIncoming(ElseV, ElseBB);
       return PN;
@@ -242,7 +265,7 @@ namespace code_generator
       // block.
       auto TheFunction = builder_.GetInsertBlock()->getParent();
       auto PreheaderBB = builder_.GetInsertBlock();
-      auto LoopBB = llvm::BasicBlock::Create(llvm::getGlobalContext(), "loop", TheFunction);
+      auto LoopBB = llvm::BasicBlock::Create(context_, "loop", TheFunction);
       
       // Insert an explicit fall through from the current block to the LoopBB.
       builder_.CreateBr(LoopBB);
@@ -251,7 +274,7 @@ namespace code_generator
       builder_.SetInsertPoint(LoopBB);
       
       // Start the PHI node with an entry for Start.
-      auto Variable = builder_.CreatePHI(llvm::Type::getDoubleTy(llvm::getGlobalContext()),
+      auto Variable = builder_.CreatePHI(llvm::Type::getDoubleTy(context_),
                                             2, forExpr->getKey().c_str());
       
       Variable->addIncoming(StartVal, PreheaderBB);
@@ -280,7 +303,7 @@ namespace code_generator
       else
       {
          // If not specified, use 1.0.
-         StepVal = llvm::ConstantFP::get(llvm::getGlobalContext(), llvm::APFloat(1.0));
+         StepVal = llvm::ConstantFP::get(context_, llvm::APFloat(1.0));
       }
       
       auto NextVar = builder_.CreateFAdd(Variable, StepVal, "nextvar");
@@ -292,12 +315,12 @@ namespace code_generator
       
       // Convert condition to a bool by comparing equal to 0.0.
       EndCond = builder_.CreateFCmpONE(EndCond,
-                                       llvm::ConstantFP::get(llvm::getGlobalContext(),
+                                       llvm::ConstantFP::get(context_,
                                                              llvm::APFloat(0.0)), "loopcond");
       
       // Create the "after loop" block and insert it.
       auto LoopEndBB = builder_.GetInsertBlock();
-      auto AfterBB = llvm::BasicBlock::Create(llvm::getGlobalContext(), "afterloop", TheFunction);
+      auto AfterBB = llvm::BasicBlock::Create(context_, "afterloop", TheFunction);
       
       // Insert the conditional branch into the end of LoopEndBB.
       builder_.CreateCondBr(EndCond, LoopBB, AfterBB);
@@ -315,7 +338,7 @@ namespace code_generator
          namedValues_.erase(varName);
       
       // for expr always returns 0.0.
-      return llvm::Constant::getNullValue(llvm::Type::getDoubleTy(llvm::getGlobalContext()));
+      return llvm::Constant::getNullValue(llvm::Type::getDoubleTy(context_));
    }
 
 
@@ -324,9 +347,9 @@ namespace code_generator
       auto argList = protoExpr->getArgumentList();
       
       std::vector<llvm::Type*> args { argList.size(),
-         llvm::Type::getDoubleTy(llvm::getGlobalContext())};
+         llvm::Type::getDoubleTy(context_)};
       
-      llvm::FunctionType* functionType = llvm::FunctionType::get(llvm::Type::getDoubleTy(llvm::getGlobalContext()),
+      llvm::FunctionType* functionType = llvm::FunctionType::get(llvm::Type::getDoubleTy(context_),
                                                                  args,
                                                                  false);
       llvm::Function* f = llvm::Function::Create(functionType,
@@ -342,8 +365,6 @@ namespace code_generator
    
    Function* CodeGeneratorImpl::codeGenFunctionExpr(const FunctionAST* functExpr)
    {
-      //hack!!!
-      //const_cast<std::unique_ptr<PrototypeAST>&>(functExpr->getPrototype());
       const auto& prototype = functExpr->getPrototype();
       const auto& body = functExpr->getBody();
       
@@ -357,7 +378,7 @@ namespace code_generator
       if(prototype->isBinary())
          binaryOperationPrecedence_[prototype->getOperatorName()] = prototype->getBinaryPrecedence();
       
-      llvm::BasicBlock* bb = llvm::BasicBlock::Create(llvm::getGlobalContext(), "entry", f);
+      llvm::BasicBlock* bb = llvm::BasicBlock::Create(context_, "entry", f);
       builder_.SetInsertPoint(bb);
       namedValues_.clear();
       for( auto& arg : f->args())
@@ -378,9 +399,10 @@ namespace code_generator
       if(returnValue != nullptr)
       {
          builder_.CreateRet(returnValue);
-         llvm::verifyFunction(*f);
-         //eager optimization peephole 
-         optimizer_->runLocalFunctionOptimization(f);
+         if(!llvm::verifyFunction(*f)) {
+            //eager optimization peephole
+            optimizer_->runLocalFunctionOptimization(f);
+         }
          return f;
       }
       
@@ -411,7 +433,7 @@ namespace code_generator
          }
          else
          {
-            initVal = llvm::ConstantFP::get(llvm::getGlobalContext(), llvm::APFloat(0.0));
+            initVal = llvm::ConstantFP::get(context_, llvm::APFloat(0.0));
          }
          
          auto alloca = CreateEntryBlockAlloca(function, varName);
@@ -459,7 +481,7 @@ namespace code_generator
    AllocaInst* CodeGeneratorImpl::CreateEntryBlockAlloca(Function *function, const std::string &variableName)
    {
       llvm::IRBuilder<> TmpB(&function->getEntryBlock(), function->getEntryBlock().begin());
-      return TmpB.CreateAlloca(llvm::Type::getDoubleTy(llvm::getGlobalContext()), 0, variableName.c_str());
+      return TmpB.CreateAlloca(llvm::Type::getDoubleTy(context_), 0, variableName.c_str());
    }
    
    ///
@@ -506,6 +528,4 @@ namespace code_generator
       builder_.CreateStore(value, variable);
       return value;
    }
-
-
 }

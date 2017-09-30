@@ -26,10 +26,10 @@ namespace  optimizer
    {
       std::unique_ptr<llvm::legacy::FunctionPassManager> funcPassManager_;
       
-      void prematureOptimization(llvm::Module* module);
       
    public:
-      explicit Optimizer(llvm::Module*);
+      explicit Optimizer();
+      void enablePrematureOptimization(llvm::Module* module);
       void runLocalFunctionOptimization(llvm::Function* f);
       
    };

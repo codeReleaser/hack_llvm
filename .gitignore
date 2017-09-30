@@ -29,3 +29,9 @@
 
 #llvm dSYM
 *.out.dSYM
+
+#swap files
+.*.swp
+
+#xcode prog
+*.xcodeproj*

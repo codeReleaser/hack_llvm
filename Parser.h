@@ -13,13 +13,18 @@
 #include <memory>
 
 #include "Lexer.h"
+#include "AST.h"
+#include "CompilerConfigurator.h"
 #include "CodeGenerator.h"
+#include "JIT.h"
 
-namespace AST {
-   class ExprAST;
-   class PrototypeAST;
-   class FunctionAST;
-}
+//namespace AST {
+//   class ExprAST;
+//   class PrototypeAST;
+//   class FunctionAST;
+//
+//}
+
 
 using namespace AST;
 
@@ -122,7 +127,12 @@ namespace parser {
       
    private:
       
+      code_generator::CodeGeneratorImpl codeGenerator_;
+      jit::JIT jitCompiler_;
+
+      
       int curToken_;
+      util::CompilerConfigurator configurator_;
       std::unique_ptr<lexer::Lexer> lexer_;
       
    };

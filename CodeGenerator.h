@@ -15,8 +15,10 @@
 #include <memory>
 
 #include "llvm/IR/Module.h"
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/IRBuilder.h"
 #include "Optimizer.h"
+
 
 namespace llvm
 {
@@ -44,6 +46,10 @@ namespace parser
    class Parser;
 }
 
+namespace jit {
+   class JIT;
+}
+
 using namespace AST;
 using namespace parser;
 using llvm::Value;
@@ -52,18 +58,25 @@ using llvm::AllocaInst;
 
 namespace code_generator
 {
+   using precedence_tree_t = std::map<unsigned char, int>;
+   using prototype_cache_t = std::unordered_map<std::string, std::unique_ptr<PrototypeAST>>;
    
    ///
-   /// @brief: The interface describe the hooks to evaluate throughout the JIT compiler
-   ///         the constructs of the language.
+   /// @brief: custom exception thrown by code generator
    ///
-   class EvalJIT
+   class CodeGeneratorOperatorNotFound : public std::exception
    {
+      std::string message_;
    public:
-      //only functions for now
-      virtual ~EvalJIT() = default;
-      virtual void evalFunctionExpr(Function* function) = 0;
+      explicit CodeGeneratorOperatorNotFound(char const* const message) noexcept : message_(message)
+      {}
+      
+      virtual const char* what() const noexcept
+      {
+         return message_.c_str();
+      }
    };
+   
    
    ///
    /// @brief: main interface of the code generator object
@@ -74,8 +87,11 @@ namespace code_generator
    class CodeGenerator
    {
    public:
+      
+      //IR generation
+      
       virtual ~CodeGenerator() = default;
-      virtual Value* errorV(const std::string&) = 0;
+      virtual Value* errorV(const std::string&) const = 0;
       virtual Value* codeGenNumberExpr(const NumberExprAST*) = 0;
       virtual Value* codeGenVariableExpr(const VariableExprAST*) = 0;
       virtual Value* codeGenUnaryExpr(const UnaryExprAST*) = 0;
@@ -87,6 +103,21 @@ namespace code_generator
       virtual Function* codeGenFunctionExpr(const FunctionAST*) = 0;
       virtual Value* codeGeneVarExpr(const VarExprAST*) = 0;
       
+   public:
+      
+      //adding new symbols and/or process new prototypes
+      
+      virtual int getOperatorPrecedence(unsigned char token) const = 0;
+      virtual const prototype_cache_t& getProtypeCache() const = 0;
+      
+      virtual void setOperatorPrecedence(unsigned char token, int value) = 0;
+      virtual void addProtypeCache(const std::string& key, std::unique_ptr<PrototypeAST>& prototype) = 0;
+      
+      //virtual hack to get the module
+      virtual void getModule(std::unique_ptr<llvm::Module>& module) = 0;
+      //hack to initialize the module and pass manager
+      virtual void InitializeModuleAndPassManager() = 0;
+      
    };
    
    ///
@@ -95,14 +126,13 @@ namespace code_generator
    
    class CodeGeneratorImpl : public CodeGenerator
    {
-      using precedence_tree_t = std::map<unsigned char, int>;
-      using prototype_cache_t = std::unordered_map<std::string, std::unique_ptr<PrototypeAST>>;
-      
    public:
     
-      explicit CodeGeneratorImpl();
+      explicit CodeGeneratorImpl(jit::JIT& jitCompiler);
 
-      virtual Value* errorV(const std::string&) override;
+      //concrete impleentation for generatring IR
+      
+      virtual Value* errorV(const std::string&) const override;
       virtual Value* codeGenNumberExpr(const NumberExprAST*) override;
       virtual Value* codeGenVariableExpr(const VariableExprAST*) override;
       virtual Value* codeGenUnaryExpr(const UnaryExprAST*) override;
@@ -114,33 +144,30 @@ namespace code_generator
       virtual Function* codeGenFunctionExpr(const FunctionAST*) override;
       virtual Value* codeGeneVarExpr(const VarExprAST*) override;
 
+   public:
       
-      //evaluate IR just generated
-      //virtual void evalFunctionExpr(Function* function) override;
-      
-      ///
-      /// @brief: bad hack to retrieve the map of operators that the language supports and
-      ///         a cache of all prototypes already generated
-      /// TODO -> redesign a bit the code
-      ///
-      static precedence_tree_t& getOperatorPrecedence();
-      static prototype_cache_t& getProtypeCache();
+      //concrete implementation for adding new prototypes/symbols
+      virtual int getOperatorPrecedence(unsigned char token) const override;
+      virtual const prototype_cache_t& getProtypeCache() const override;
+      virtual void setOperatorPrecedence(unsigned char token, int value) override;
+      virtual void addProtypeCache(const std::string& key, std::unique_ptr<PrototypeAST>& prototype) override;
+
+      //hack to retrieve the module
+      virtual void getModule( std::unique_ptr<llvm::Module>& module) override { module = std::move(module_); }
+      virtual void InitializeModuleAndPassManager() override;
+
       
    private:
       
-      //std::unique_ptr<jit::JIT> jit_; //jit compiler
-      std::unique_ptr<llvm::Module> module_;
+      llvm::LLVMContext context_;
       llvm::IRBuilder<> builder_;
-
-      //std::unordered_map<std::string, Value*> namedValues_;
-      std::unordered_map<std::string, llvm::AllocaInst*> namedValues_;
+      std::unique_ptr<llvm::Module> module_;
       std::unique_ptr<optimizer::Optimizer> optimizer_;
+      std::unordered_map<std::string, llvm::AllocaInst*> namedValues_;
+      precedence_tree_t binaryOperationPrecedence_;
+      prototype_cache_t prototypeCache_;
       
-      //operators precedence map
-      static precedence_tree_t binaryOperationPrecedence_;
-
-      //prototypes whose the code generation has already run
-      static prototype_cache_t prototypeCache_;
+      jit::JIT& jitCompiler_;
       
    private:
       

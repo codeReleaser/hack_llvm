@@ -15,12 +15,19 @@
 #include <vector>
 #include <memory>
 
-#include "CodeGenerator.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Value.h"
 
+namespace code_generator {
+   class CodeGenerator;
+}
+
+namespace llvm{
+   class raw_ostream;
+}
 
 namespace AST {
+   
  
    ///
    /// @brief: base class to for all expression nodes
@@ -29,13 +36,19 @@ namespace AST {
    {
       
    public:
-      explicit ExprAST();
+      explicit ExprAST(code_generator::CodeGenerator& codeGenerator);
+      
       virtual ~ExprAST() = default;
+      
+      int getLine() const;
+      int getCol() const;
+      virtual llvm::raw_ostream &dump(llvm::raw_ostream &out, int ind);
+      
       virtual llvm::Value* codeGen() const = 0;
       
    protected:
-      using CodeGen = std::unique_ptr<code_generator::CodeGenerator>;
-      static CodeGen codeGen_;
+      code_generator::CodeGenerator& codeGenerator_; //class that generates IR
+      //SourceLocation location_; //debug info
    };
    
    ///
@@ -45,8 +58,9 @@ namespace AST {
    {
       
    public:
-      explicit NumberExprAST(double val);
+      explicit NumberExprAST(code_generator::CodeGenerator& codeGenerator, double val);
       double getVal() const;
+      llvm::raw_ostream& dump(llvm::raw_ostream &out, int ind) override;
       llvm::Value* codeGen() const override;
       
    private:
@@ -60,79 +74,13 @@ namespace AST {
    {
       
    public:
-      explicit VariableExprAST(const std::string& name );
+      explicit VariableExprAST(code_generator::CodeGenerator& codeGenerator, const std::string& name );
       const std::string& getName() const;
+      llvm::raw_ostream &dump(llvm::raw_ostream &out, int ind) override;
       llvm::Value* codeGen() const override;
       
    private:
       std::string name_;
-   };
-   
-   ///
-   /// @brief: class to represent a function calls expression
-   ///
-   class CallExprAST : public ExprAST
-   {
-      using Args = std::vector<std::unique_ptr<ExprAST>>;
-     
-   public:
-      explicit CallExprAST(const std::string& callee, Args args);
-      const Args& getArgumentList() const;
-      const std::string getCallee() const;
-      llvm::Value* codeGen() const override;
-      
-   private:
-      std::string callee_;
-      Args args_;
-   };
-   
-   ///
-   ///@brief: class to represent a prototype of a function
-   ///
-   class PrototypeAST : public ExprAST
-   {
-      using Args = std::vector<std::string>;
-      
-   public:
-      explicit PrototypeAST(std::string name,
-                            Args args,
-                            bool is_operator = false,
-                            unsigned precedence = 0);
-      
-      const Args& getArgumentList() const;
-      const std::string& getName() const;
-      bool isUnary() const;
-      bool isBinary() const;
-      unsigned getBinaryPrecedence() const;
-      char getOperatorName() const;
-      
-      llvm::Function* codeGen() const override;
-
-   private:
-      std::string name_;
-      Args args_;
-      bool is_operator_;
-      unsigned precedence_;
-   };
-   
-   ///
-   ///@brief: representation function definition itself
-   ///
-   class FunctionAST : public ExprAST
-   {
-      using prototype_t = std::unique_ptr<PrototypeAST>;
-      using body_t = std::unique_ptr<ExprAST>;
-     
-   public:
-      explicit FunctionAST(prototype_t prototype, body_t body);
-      const prototype_t& getPrototype() const;
-      const body_t& getBody() const;
-      llvm::Function* codeGen() const override;
-      //void eval(llvm::Function* f); //add jit compilation for functions
-      
-   private:
-      prototype_t prototype_;
-      body_t body_;
    };
    
    ///
@@ -145,10 +93,17 @@ namespace AST {
       using else_branch_t = std::unique_ptr<ExprAST>;
       
    public:
-      explicit IfExprAST(condion_t c, then_branch_t t, else_branch_t e);
+      
+      explicit IfExprAST(code_generator::CodeGenerator& codeGenerator,
+                         condion_t c,
+                         then_branch_t t,
+                         else_branch_t e);
+      
       const condion_t& getCondion() const;
       const then_branch_t& getThenBranch() const;
       const else_branch_t& getElseBranch() const;
+      llvm::raw_ostream &dump(llvm::raw_ostream &out, int ind) override;
+      
       llvm::Value* codeGen() const override;
       
    private:
@@ -164,7 +119,8 @@ namespace AST {
       using expression_t = std::unique_ptr<ExprAST>;
       
    public:
-      explicit ForExprAST(std::string key,
+      explicit ForExprAST(code_generator::CodeGenerator& codeGenerator,
+                          std::string key,
                           expression_t start,
                           expression_t end,
                           expression_t step,
@@ -175,6 +131,7 @@ namespace AST {
       const expression_t& getEnd()   const;
       const expression_t& getStep()  const;
       const expression_t& getBody()  const;
+      llvm::raw_ostream &dump(llvm::raw_ostream &out, int ind) override;
       
       llvm::Value* codeGen() const override;
       
@@ -193,9 +150,11 @@ namespace AST {
       
    public:
       
-      explicit UnaryExprAST(opcode_t opcode, operand_t operand);
+      explicit UnaryExprAST(code_generator::CodeGenerator& codeGenerator, opcode_t opcode, operand_t operand);
       opcode_t getOpcode() const;
       const operand_t& getOperand() const;
+      llvm::raw_ostream &dump(llvm::raw_ostream &out, int ind) override;
+      
       llvm::Value *codeGen() const override;
       
    private:
@@ -212,10 +171,12 @@ namespace AST {
       using operand_t = std::unique_ptr<ExprAST>;
       
    public:
-      explicit BinaryExprAST(opcode_t opcode, operand_t lhs, operand_t rhs);
+      explicit BinaryExprAST(code_generator::CodeGenerator& codesGenerator,
+                             opcode_t opcode, operand_t lhs, operand_t rhs);
       opcode_t getOpcode() const;
       const operand_t& getLeftOperand() const;
       const operand_t& getRightOperand() const;
+      llvm::raw_ostream &dump(llvm::raw_ostream &out, int ind) override;
       llvm::Value* codeGen() const override;
       
    private:
@@ -233,14 +194,92 @@ namespace AST {
       using expression_t = std::unique_ptr<ExprAST>;
       
    public:
-      VarExprAST(variable_names_t varNames, expression_t body);
+      VarExprAST(code_generator::CodeGenerator& codesGenerator,
+                 variable_names_t varNames, expression_t body);
       const variable_names_t& getVarNames() const;
       const expression_t& getBody() const;
+      llvm::raw_ostream &dump(llvm::raw_ostream &out, int ind) override;
       llvm::Value *codeGen() const override;
       
    private:
       variable_names_t varNames_;
       expression_t body_;
+   };
+   
+   
+   ///
+   /// functions
+   ///
+   
+   ///
+   /// @brief: class to represent a function calls expression
+   ///
+   class CallExprAST : public ExprAST
+   {
+      using Args = std::vector<std::unique_ptr<ExprAST>>;
+      
+   public:
+      explicit CallExprAST(code_generator::CodeGenerator& codesGenerator, const std::string& callee, Args args);
+      const Args& getArgumentList() const;
+      const std::string getCallee() const;
+      llvm::raw_ostream &dump(llvm::raw_ostream &out, int ind) override;
+      llvm::Value* codeGen() const override;
+      
+   private:
+      std::string callee_;
+      Args args_;
+   };
+   
+   ///
+   ///@brief: class to represent a prototype of a function
+   ///
+   class PrototypeAST : public ExprAST
+   {
+      using Args = std::vector<std::string>;
+      
+   public:
+      explicit PrototypeAST(code_generator::CodeGenerator& codesGenerator,
+                            std::string name,
+                            Args args,
+                            bool is_operator = false,
+                            unsigned precedence = 0);
+      
+      const Args& getArgumentList() const;
+      const std::string& getName() const;
+      bool isUnary() const;
+      bool isBinary() const;
+      unsigned getBinaryPrecedence() const;
+      char getOperatorName() const;
+      
+      llvm::Function* codeGen() const override;
+      
+   private:
+      std::string name_;
+      Args args_;
+      bool is_operator_;
+      unsigned precedence_;
+   };
+   
+   ///
+   ///@brief: representation function definition itself
+   ///
+   class FunctionAST : public ExprAST
+   {
+      using prototype_t = std::unique_ptr<PrototypeAST>;
+      using body_t = std::unique_ptr<ExprAST>;
+      
+   public:
+      explicit FunctionAST(code_generator::CodeGenerator& codesGenerator, prototype_t prototype, body_t body);
+      const prototype_t& getPrototype() const;
+      const body_t& getBody() const;
+      llvm::Function* codeGen() const override;
+      llvm::raw_ostream &dump(llvm::raw_ostream &out, int ind) override;
+      
+      //void eval(llvm::Function* f); //add jit compilation for functions
+      
+   private:
+      prototype_t prototype_;
+      body_t body_;
    };
 
    

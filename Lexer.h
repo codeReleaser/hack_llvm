@@ -10,6 +10,7 @@
 #define Lexer_h
 
 #include <string>
+#include "Debug.h"
 
 namespace lexer
 {
@@ -54,6 +55,8 @@ namespace lexer
       
    public:
       
+      Lexer(/*debug::DebugInfo& debug*/);
+      
       /**
        * @brief: tokenize my input.
        *         Reading from std::input a single char and recongnise the basic tokens of the language
@@ -67,6 +70,10 @@ namespace lexer
    private:
       std::string identifierStr_;
       double numVal_;
+      //debug::DebugInfo& debug_;
+      
+      
+      int advance();
       
    };
    

@@ -11,7 +11,9 @@
 #include "AST.h"
 #include "Lexer.h"
 #include "AST.h"
-#include "CodeGenerator.h"
+#include "Debug.h"
+#include "llvm/Support/raw_ostream.h"
+
 
 #include <cctype>
 #include <vector>
@@ -26,13 +28,23 @@ namespace parser
    using ArgsExpr_t = std::vector<std::unique_ptr<ExprAST>>;
    using ArgsStr_t = std::vector<std::string>;
    
+   
+   debug::DebugInfo gDebugInfo;
+   //code_generator::CodeGeneratorImpl gCodeGenerator;
+   //jit::JIT gJitCompiler;
+   
+   
    ///
    /// @brief: construct a pimpl lexer
    ///
    Parser::Parser() :
    curToken_(0),
+   codeGenerator_(jitCompiler_),
+   configurator_(util::CompilerConfigurator(codeGenerator_, jitCompiler_)),
    lexer_(std::make_unique<Lexer>())
-   {}
+   {
+      codeGenerator_.InitializeModuleAndPassManager();
+   }
    
    ///
    /// intenal routines
@@ -49,16 +61,16 @@ namespace parser
       if(!isascii(curToken_))
          return -1;
       
-      int tokenPrec = CodeGeneratorImpl::getOperatorPrecedence()[curToken_];
-      if(tokenPrec <=0 )
-         return -1;
+      //here we could throw.. what should I do? .. dunno now
       
+      int tokenPrec = configurator_.getCodeGenerator().getOperatorPrecedence(curToken_);
       return tokenPrec;
    }
    
    void Parser::setTokenPrecedence(unsigned char token, int value)
    {
-      CodeGeneratorImpl::getOperatorPrecedence()[token] = value;
+      //here we could throw.. what should I do? .. dunno now
+      configurator_.getCodeGenerator().setOperatorPrecedence(token, value);
    }
    
    expression_t Parser::error(const char* str)
@@ -85,7 +97,7 @@ namespace parser
    
    expression_t Parser::parseNumberExpr()
    {
-      auto res = std::make_unique<AST::NumberExprAST>(lexer_->getNum());
+      auto res = std::make_unique<AST::NumberExprAST>(configurator_.getCodeGenerator(), lexer_->getNum());
       getNextToken();
       return std::move(res);
    }
@@ -111,10 +123,12 @@ namespace parser
    {
       auto idName = lexer_->getId();
       
+      //SourceLocation Idlocation = debugInfo_.currentLocation_;
+      
       getNextToken();
       
       if( curToken_ != '(')
-         return std::make_unique<AST::VariableExprAST>(idName);
+         return std::make_unique<AST::VariableExprAST>(configurator_.getCodeGenerator(), idName);
       
       getNextToken();
       ArgsExpr_t args;
@@ -144,7 +158,7 @@ namespace parser
       }
       
       getNextToken();
-      return std::make_unique<AST::CallExprAST>(idName, std::move(args));
+      return std::make_unique<AST::CallExprAST>(configurator_.getCodeGenerator(), idName, std::move(args));
    }
    
    expression_t Parser::parsePrimaryExpression()
@@ -182,7 +196,7 @@ namespace parser
       int opcode = curToken_;
       getNextToken();
       if (auto operand = parseUnary())
-         return std::make_unique<UnaryExprAST>(opcode, std::move(operand));
+         return std::make_unique<UnaryExprAST>(configurator_.getCodeGenerator(), opcode, std::move(operand));
       
       return nullptr;
    }
@@ -196,9 +210,10 @@ namespace parser
             return lhs;
          
          int binOp = curToken_;
+         //SourceLocation binaryOpLocation = debugInfo_.currentLocation_;
          getNextToken();
          
-         auto rhs = parseUnary(); //parsePrimaryExpression();
+         auto rhs = parseUnary(); 
          if( rhs == nullptr)
             return nullptr;
          
@@ -210,12 +225,14 @@ namespace parser
                return nullptr;
          }
          
-         lhs = std::make_unique<AST::BinaryExprAST>(binOp, std::move(lhs), std::move(rhs));
+         lhs = std::make_unique<AST::BinaryExprAST>(configurator_.getCodeGenerator(), binOp, std::move(lhs), std::move(rhs));
       }
    }
    
    prototype_t Parser::parsePrototype()
    {
+      //SourceLocation fnLocation = debugInfo_.currentLocation_;
+
       unsigned binaryPrecedence = 30;
       // by default I assume I am going to parse a prototype definition
       unsigned kind = 0; //0 (prototype) - 1(unary) - 2(binary)
@@ -283,7 +300,11 @@ namespace parser
       if (kind && args.size() != kind)
          return errorP("Invalid number of operands for operator");
       
-      return std::make_unique<AST::PrototypeAST>(functionName, std::move(args), kind != 0, binaryPrecedence);
+      return std::make_unique<AST::PrototypeAST>(configurator_.getCodeGenerator(),
+                                                 functionName,
+                                                 std::move(args),
+                                                 kind != 0,
+                                                 binaryPrecedence);
    }
    
    function_t Parser::parseDefinition()
@@ -296,7 +317,8 @@ namespace parser
       auto expression = parseExpression();
       if( expression != nullptr )
       {
-         return std::make_unique<AST::FunctionAST>(std::move(prototype), std::move(expression));
+         return
+         std::make_unique<AST::FunctionAST>(configurator_.getCodeGenerator(), std::move(prototype), std::move(expression));
       }
       
       return nullptr;
@@ -304,11 +326,15 @@ namespace parser
    
    function_t Parser::parseTopLevelExpr()
    {
+      //SourceLocation fnLocation = debugInfo_.currentLocation_;
       auto expression = parseExpression();
       if( expression != nullptr)
       {
-         auto prototype = std::make_unique<AST::PrototypeAST>("__anon_expr", std::vector<std::string> {});
-         return std::make_unique<AST::FunctionAST>(std::move(prototype), std::move(expression));
+         auto prototype = std::make_unique<AST::PrototypeAST>(configurator_.getCodeGenerator(),
+                                                              "__anon_expr", std::vector<std::string> {});
+         
+         return std::make_unique<AST::FunctionAST>(configurator_.getCodeGenerator(),
+                                                   std::move(prototype), std::move(expression));
       }
       return nullptr;
    }
@@ -321,6 +347,8 @@ namespace parser
    
    expression_t Parser::parseIfExpr()
    {
+      //SourceLocation ifLocation = debugInfo_.currentLocation_;;
+
       getNextToken();
       auto Cond = parseExpression();
       
@@ -345,7 +373,8 @@ namespace parser
       if (!Else)
          return nullptr;
       
-      return std::make_unique<IfExprAST>(std::move(Cond), std::move(Then), std::move(Else));
+      return std::make_unique<IfExprAST>(configurator_.getCodeGenerator(),
+                                         std::move(Cond), std::move(Then), std::move(Else));
    }
    
    expression_t Parser::parseForExpr()
@@ -396,7 +425,8 @@ namespace parser
       if (!Body)
          return nullptr;
       
-      return llvm::make_unique<ForExprAST>(IdName, std::move(Start),
+      return llvm::make_unique<ForExprAST>(configurator_.getCodeGenerator(),
+                                           IdName, std::move(Start),
                                            std::move(End), std::move(Step),
                                            std::move(Body));
       
@@ -451,7 +481,8 @@ namespace parser
       if (!body)
          return nullptr;
       
-      return std::make_unique<VarExprAST>(std::move(variableNames), std::move(body));
+      return std::make_unique<VarExprAST>(configurator_.getCodeGenerator(),
+                                          std::move(variableNames), std::move(body));
 
    }
 
@@ -462,11 +493,20 @@ namespace parser
    
    void Parser::handleDefinition()
    {
-      if(auto parsedDefinition = parseDefinition())
+      if(const auto& parsedDefinition = parseDefinition())
       {
-         if( auto* defintionIR = parsedDefinition->codeGen())
+         if( const auto* defintionIR = parsedDefinition->codeGen())
          {
-            defintionIR->dump();
+            defintionIR->print(llvm::errs());
+            
+            //TODO: remove this hack!!
+            std::unique_ptr<llvm::Module> module;
+            codeGenerator_.getModule(module);
+            
+            jitCompiler_.addModule(module);
+            codeGenerator_.InitializeModuleAndPassManager();
+
+            //jit_->addModule(std::move)
          }
       }
       else
@@ -479,10 +519,10 @@ namespace parser
    {
       if(auto parsedExtern = parseExtern())
       {
-         if(auto* externIR = parsedExtern->codeGen())
+         if(const auto* externIR = parsedExtern->codeGen())
          {
-            externIR->dump();
-            CodeGeneratorImpl::getProtypeCache()[parsedExtern->getName()] = std::move(parsedExtern);
+            externIR->print(llvm::errs());
+            configurator_.getCodeGenerator().addProtypeCache(parsedExtern->getName(), parsedExtern);
          }
       }
       else
@@ -495,10 +535,29 @@ namespace parser
    {
       if(auto parsedTopLevelExpr = parseTopLevelExpr())
       {
-         if( auto* topLevelExprIR = parsedTopLevelExpr->codeGen())
+         if( const auto* topLevelExprIR = parsedTopLevelExpr->codeGen())
          {
-            //parsedTopLevelExpr->eval(topLevelExprIR); //evaluate using JIT
-            topLevelExprIR->dump();   //dump IR for the function
+            topLevelExprIR->print(llvm::errs());   //dump IR for the function
+            
+            //evaluation
+            std::unique_ptr<llvm::Module> module;
+            codeGenerator_.getModule(module);
+            
+            auto H = jitCompiler_.addModule(module);
+            codeGenerator_.InitializeModuleAndPassManager();
+            //InitializeModuleAndPassManager();
+            
+            // Search the JIT for the __anon_expr symbol.
+            auto exprSymbol = jitCompiler_.findSymbol("__anon_expr");
+            assert(exprSymbol && "Function not found");
+            
+            // Get the symbol's address and cast it to the right type (takes no
+            // arguments, returns a double) so we can call it as a native function.
+            double (*FP)() = (double (*)())(intptr_t)cantFail(exprSymbol.getAddress());
+            fprintf(stderr, "Evaluated to %f\n", FP());
+            
+            // Delete the anonymous expression module from the JIT.
+            jitCompiler_.removeModule(H);
          }
       }
       else
@@ -534,8 +593,8 @@ namespace parser
                break;
          }
          
-         std::cerr << ">";
-
+         std::cout << "\n\n >>";
+         
       }
    }
 }

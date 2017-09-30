@@ -7,18 +7,13 @@
 //
 
 #include <iostream>
-
-
-#include "llvm/ExecutionEngine/ExecutionEngine.h"
-#include "llvm/ExecutionEngine/MCJIT.h"
-#include "llvm/ExecutionEngine/SectionMemoryManager.h"
-#include "TestParser.h"
-
+#include "Driver.h"
 
 int main(int argc, const char * argv[]) {
    
-   TestParser test;
-   test.interativeTest();
+   driver::DriverConfiguration cnf;
+   driver::Driver driver{cnf};
+   driver.go();
    
    return 0;
 }

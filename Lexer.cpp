@@ -11,18 +11,23 @@
 #include <cctype>
 #include <cstdlib>
 
-
 namespace lexer
 {
+   Lexer::Lexer(/*debug::DebugInfo& debug*/) /*:
+   debug_(debug)*/
+   {}
    
-   int Lexer::gettok() {
+   int Lexer::gettok()
+   {
       
       static int LastChar = ' ';
       
       // Skip any whitespace.
       while (isspace(LastChar)) {
-         LastChar = getchar();
+         LastChar = advance();
       }
+      
+      //debug_.currentLocation_ = debug_.currentLexerLocation_;
       
       if (isalpha(LastChar)) {
          // identifier: [a-zA-Z][a-zA-Z0-9]*
@@ -88,7 +93,7 @@ namespace lexer
       
       // Otherwise, just return the character as its ascii value.
       int ThisChar = LastChar;
-      LastChar = getchar();
+      LastChar = advance();
       return ThisChar;
      
    }
@@ -101,6 +106,23 @@ namespace lexer
    std::string Lexer::getId() const
    {
       return identifierStr_;
+   }
+   
+   int Lexer::advance()
+   {
+      int LastChar = getchar();
+      
+//      if (LastChar == '\n' || LastChar == '\r')
+//      {
+//         debug_.currentLexerLocation_.line++;
+//         debug_.currentLexerLocation_.col = 0;
+//      }
+//      else
+//      {
+//         debug_.currentLexerLocation_.col++;
+//      }
+      
+      return LastChar;
    }
    
 }

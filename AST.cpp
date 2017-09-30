@@ -7,26 +7,53 @@
 //
 
 #include "AST.h"
+#include "CodeGenerator.h"
+#include "llvm/Support/raw_ostream.h"
 
 using llvm::Value;
 using llvm::Function;
+using llvm::raw_ostream;
+using code_generator::CodeGenerator;
 
 namespace AST {
    
-   ExprAST::CodeGen ExprAST::codeGen_ =
-      std::make_unique<code_generator::CodeGeneratorImpl>();
-
+   ///
+   /// indent utility
+   ///
+   raw_ostream &indent(raw_ostream &O, int size) {
+      return O << std::string(size, ' ');
+   }
+   
+   
    ///
    /// Default ExprAST constructor (it creates a instance of the code generator)
    ///
-   ExprAST::ExprAST()
+   ExprAST::ExprAST(CodeGenerator& codeGenerator) :
+      codeGenerator_(codeGenerator)
    {}
+   
+   int ExprAST::getLine() const
+   {
+      return 0; //location_.line;
+   }
+   
+   int ExprAST::getCol() const
+   {
+      return 0;// location_.col;
+   }
+   
+   raw_ostream &ExprAST::dump(raw_ostream &out, int index)
+   {
+     return out << ':' << getLine() << ':' << getCol() << '\n';
+   }
    
    ///
    /// Numeric expression AST node
    ///
    
-   NumberExprAST::NumberExprAST(double val) : val_(val)
+   NumberExprAST::NumberExprAST(CodeGenerator& codeGenerator, double val):
+   ExprAST(codeGenerator),
+   val_(val)
    {}
    
    double NumberExprAST::getVal() const
@@ -34,16 +61,23 @@ namespace AST {
       return val_;
    }
    
+   raw_ostream& NumberExprAST::dump(raw_ostream &out, int ind)
+   {
+      return ExprAST::dump(out << val_, ind);
+   }
+
+   
    Value* NumberExprAST::codeGen() const
    {
-      return codeGen_->codeGenNumberExpr(this);
+      return codeGenerator_.codeGenNumberExpr(this);
    }
    
    ///
    /// Variable expression
    ///
    
-   VariableExprAST::VariableExprAST(const std::string& name) :
+   VariableExprAST::VariableExprAST(CodeGenerator& codeGenerator, const std::string& name) :
+   ExprAST(codeGenerator),
    name_(name)
    {}
    
@@ -52,17 +86,22 @@ namespace AST {
       return name_;
    }
    
+   raw_ostream &VariableExprAST::dump(raw_ostream &out, int ind)
+   {
+      return ExprAST::dump(out << name_, ind);
+   }
 
    Value* VariableExprAST::codeGen() const
    {
-      return codeGen_->codeGenVariableExpr(this);
+      return codeGenerator_.codeGenVariableExpr(this);
    }
    
    ///
    /// Unary expression
    ///
    
-   UnaryExprAST::UnaryExprAST(opcode_t opcode, operand_t operand) :
+   UnaryExprAST::UnaryExprAST(CodeGenerator& codeGenerator, opcode_t opcode, operand_t operand) :
+   ExprAST(codeGenerator),
    opcode_(opcode),
    operand_(std::move(operand))
    {}
@@ -76,9 +115,16 @@ namespace AST {
       return operand_;
    }
    
+   raw_ostream &UnaryExprAST::dump(raw_ostream &out, int ind)
+   {
+      ExprAST::dump(out << "unary" << opcode_, ind);
+      operand_->dump(out, ind + 1);
+      return out;
+   }
+   
    llvm::Value *UnaryExprAST::codeGen() const
    {
-      return codeGen_->codeGenUnaryExpr(this);
+      return codeGenerator_.codeGenUnaryExpr(this);
    }
    
    
@@ -86,7 +132,8 @@ namespace AST {
    /// Binary expression
    ///
    
-   BinaryExprAST::BinaryExprAST(opcode_t opcode, operand_t lhs, operand_t rhs) :
+   BinaryExprAST::BinaryExprAST(CodeGenerator& codeGenerator, opcode_t opcode, operand_t lhs, operand_t rhs) :
+   ExprAST(codeGenerator),
    opcode_(opcode),
    lhs_(std::move(lhs)),
    rhs_(std::move(rhs))
@@ -107,16 +154,25 @@ namespace AST {
       return rhs_;
    }
    
+   raw_ostream &BinaryExprAST::dump(raw_ostream &out, int ind)
+   {
+      ExprAST::dump(out << "binary" << opcode_, ind);
+      lhs_->dump(indent(out, ind) << "LHS:", ind + 1);
+      rhs_->dump(indent(out, ind) << "RHS:", ind + 1);
+      return out;
+   }
+
    llvm::Value* BinaryExprAST::codeGen() const
    {
-      return codeGen_->codeGenBinaryExpr(this);
+      return codeGenerator_.codeGenBinaryExpr(this);
    }
    
    ///
    /// Call expression
    ///
 
-   CallExprAST::CallExprAST(const std::string& callee, Args args) :
+   CallExprAST::CallExprAST(CodeGenerator& codeGenerator, const std::string& callee, Args args) :
+   ExprAST(codeGenerator),
    callee_(callee),
    args_(std::move(args))
    {}
@@ -131,19 +187,30 @@ namespace AST {
       return callee_;
    }
    
+   raw_ostream &CallExprAST::dump(raw_ostream &out, int ind)
+   {
+      ExprAST::dump(out << "Call" << callee_, ind);
+      for (const auto &arg : args_)
+         arg->dump( indent(out, ind+1), ind+1);
+      return out;
+   }
+
+   
    llvm::Value* CallExprAST::codeGen() const
    {
-      return codeGen_->codeGenCallExpr(this);
+      return codeGenerator_.codeGenCallExpr(this);
    }
    
    ///
    /// Prototype AST
    ///
 
-   PrototypeAST::PrototypeAST( std::string name,
+   PrototypeAST::PrototypeAST( CodeGenerator& codeGenerator,
+                               std::string name,
                                PrototypeAST::Args args,
                                bool is_operator,
                                unsigned precedence) :
+      ExprAST(codeGenerator),
       name_(std::move(name)),
       args_(std::move(args)),
       is_operator_(is_operator),
@@ -184,14 +251,17 @@ namespace AST {
    
    llvm::Function* PrototypeAST::codeGen() const
    {
-      return codeGen_->codeGenPrototypeExpr(this);
+      return codeGenerator_.codeGenPrototypeExpr(this);
    }
    
    ///
    /// FunctionAST
    ///
    
-   FunctionAST::FunctionAST(FunctionAST::prototype_t prototype, FunctionAST::body_t body) :
+   FunctionAST::FunctionAST(CodeGenerator& codeGenerator,
+                            FunctionAST::prototype_t prototype,
+                            FunctionAST::body_t body) :
+      ExprAST(codeGenerator),
       prototype_(std::move(prototype)),
       body_(std::move(body))
    {}
@@ -206,9 +276,17 @@ namespace AST {
       return body_;
    }
    
+   raw_ostream &FunctionAST::dump(raw_ostream &out, int ind)
+   {
+      indent(out, ind) << "FunctionAST\n";
+      ++ind;
+      indent(out, ind) << "Body:";
+      return body_ ? body_->dump(out, ind) : out << "null\n";
+   }
+   
    llvm::Function* FunctionAST::codeGen() const
    {
-      return codeGen_->codeGenFunctionExpr(this);
+      return codeGenerator_.codeGenFunctionExpr(this);
    }
    
 //   void FunctionAST::eval(llvm::Function* f)
@@ -220,8 +298,14 @@ namespace AST {
    /// IfExprAST
    ///
    
-   IfExprAST::IfExprAST(condion_t c, then_branch_t t, else_branch_t e) :
-   cond_(std::move(c)), then_(std::move(t)), else_(std::move(e))
+   IfExprAST::IfExprAST(CodeGenerator& codeGenerator,
+                        condion_t c,
+                        then_branch_t t,
+                        else_branch_t e) :
+   ExprAST(codeGenerator),
+   cond_(std::move(c)),
+   then_(std::move(t)),
+   else_(std::move(e))
    {}
                                                    
    const IfExprAST::condion_t& IfExprAST::getCondion() const
@@ -239,20 +323,31 @@ namespace AST {
       return else_;
    }
    
+   raw_ostream &IfExprAST::dump(raw_ostream &out, int ind)
+   {
+      ExprAST::dump(out << "if", ind);
+      cond_->dump(indent(out, ind) << "Cond:", ind + 1);
+      then_->dump(indent(out, ind) << "Then:", ind + 1);
+      else_->dump(indent(out, ind) << "Else:", ind + 1);
+      return out;
+   }
+   
    llvm::Value* IfExprAST::codeGen() const
    {
-      return codeGen_->codeGenIfExpr(this);
+      return codeGenerator_.codeGenIfExpr(this);
    }
    
    ///
    /// ForExprAST
    ///
    
-   ForExprAST::ForExprAST(std::string keyLoop,
+   ForExprAST::ForExprAST(CodeGenerator& codeGenerator,
+                       std::string keyLoop,
                        expression_t start,
                        expression_t end,
                        expression_t step,
                        expression_t body) :
+   ExprAST(codeGenerator),
    key_(std::move(keyLoop)),
    start_(std::move(start)),
    end_(std::move(end)),
@@ -284,17 +379,29 @@ namespace AST {
    {
       return body_;
    }
+   
+   raw_ostream &ForExprAST::dump(raw_ostream &out, int ind)
+   {
+      ExprAST::dump(out << "for", ind);
+      start_->dump(indent(out, ind) << "Cond:", ind + 1);
+      end_->dump(indent(out, ind) << "End:", ind + 1);
+      step_->dump(indent(out, ind) << "Step:", ind + 1);
+      body_->dump(indent(out, ind) << "Body:", ind + 1);
+      return out;
+   }
 
    llvm::Value* ForExprAST::codeGen() const
    {
-      return codeGen_->codeGenForExpr(this);
+      return codeGenerator_.codeGenForExpr(this);
    }
    
    ///
    /// VarExprAST
    ///
    
-   VarExprAST::VarExprAST(variable_names_t varNames, expression_t body) :
+   VarExprAST::VarExprAST(CodeGenerator& codeGenerator,
+                          variable_names_t varNames, expression_t body) :
+   ExprAST(codeGenerator),
    varNames_(std::move(varNames)),
    body_(std::move(body))
    {}
@@ -309,9 +416,19 @@ namespace AST {
       return body_;
    }
    
+   raw_ostream &VarExprAST::dump(raw_ostream &out, int ind)
+   {
+      ExprAST::dump(out << "var", ind);
+      for (const auto &NamedVar : varNames_)
+         NamedVar.second->dump(indent(out, ind) << NamedVar.first << ':', ind+1);
+      
+      body_->dump(indent(out, ind) << "Body:", ind + 1);
+      return out;
+   }
+   
    llvm::Value* VarExprAST::codeGen() const
    {
-      return codeGen_->codeGeneVarExpr(this);
+      return codeGenerator_.codeGeneVarExpr(this);
    }
 
 
